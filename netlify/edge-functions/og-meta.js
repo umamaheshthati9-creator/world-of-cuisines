@@ -35,13 +35,10 @@ export default async (request, context) => {
 
   try {
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    const { data, error } = await sb
-      .from("recipes")
-      .select("data")
-      .eq("data->>slug", slug)
-      .limit(1);
-    if (!error && data && data[0] && data[0].data) {
-      recipe = data[0].data;
+    const { data, error } = await sb.from("recipes").select("data");
+    if (!error && data) {
+      const match = data.find((row) => row.data && row.data.slug === slug);
+      if (match) recipe = match.data;
     }
   } catch (e) {
     // Network hiccup or Supabase down — fall through and just serve the normal page.
