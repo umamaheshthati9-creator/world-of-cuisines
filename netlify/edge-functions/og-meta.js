@@ -4,6 +4,8 @@
 // Bluesky, Flipboard, WhatsApp, etc. show the real dish, not a generic banner.
 // Everything else (any other path, or a recipe that isn't found) is left untouched.
 
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 const SUPABASE_URL = "https://dvaxmxouxfpmeydebffk.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_GUFW4xa8SNOm1ncjm5SGwQ_l79hrAQE";
 
@@ -32,20 +34,14 @@ export default async (request, context) => {
   let recipe = null;
 
   try {
-    const apiUrl =
-      SUPABASE_URL +
-      "/rest/v1/recipes?select=data&data->>slug=eq." +
-      encodeURIComponent(slug) +
-      "&limit=1";
-    const res = await fetch(apiUrl, {
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: "Bearer " + SUPABASE_ANON_KEY
-      }
-    });
-    if (res.ok) {
-      const rows = await res.json();
-      if (rows && rows[0] && rows[0].data) recipe = rows[0].data;
+    const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    const { data, error } = await sb
+      .from("recipes")
+      .select("data")
+      .eq("data->>slug", slug)
+      .limit(1);
+    if (!error && data && data[0] && data[0].data) {
+      recipe = data[0].data;
     }
   } catch (e) {
     // Network hiccup or Supabase down — fall through and just serve the normal page.
