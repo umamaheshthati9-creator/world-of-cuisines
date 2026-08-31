@@ -32,20 +32,40 @@ export default async (request, context) => {
 
   const slug = parts[1];
   let recipe = null;
+  let debugInfo = "no-attempt";
 
   try {
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data, error } = await sb.from("recipes").select("data");
-    if (!error && data) {
+    if (error) {
+      debugInfo = "supabase-error: " + (error.message || JSON.stringify(error));
+    } else if (!data) {
+      debugInfo = "no-data-returned";
+    } else {
+      debugInfo = "rows=" + data.length + " slugs=" + data.map((r) => (r.data && r.data.slug) || "?").join(",");
       const match = data.find((row) => row.data && row.data.slug === slug);
-      if (match) recipe = match.data;
+      if (match) {
+        recipe = match.data;
+        debugInfo += " MATCHED";
+      } else {
+        debugInfo += " NOMATCH-for-" + slug;
+      }
     }
   } catch (e) {
-    // Network hiccup or Supabase down — fall through and just serve the normal page.
+    debugInfo = "exception: " + (e && e.message ? e.message : String(e));
   }
 
   const response = await context.next();
-  if (!recipe) return response;
+
+  if (!recipe) {
+    // TEMPORARY DEBUG MODE: show what went wrong right in the title, so it's visible
+    // in any link-preview checker without needing to read server logs.
+    let html = await response.text();
+    html = html.replace(/<title>.*?<\/title>/, `<title>DEBUG: ${escapeHtml(debugInfo)}</title>`);
+    const headers = new Headers(response.headers);
+    headers.set("content-type", "text/html; charset=utf-8");
+    return new Response(html, { status: response.status, headers });
+  }
 
   let html = await response.text();
 
