@@ -34,6 +34,12 @@ export default async (request, context) => {
   let recipe = null;
   let debugInfo = "no-attempt";
 
+  function slugify(str) {
+    return (str || "").toString().trim().toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "recipe";
+  }
+
   try {
     const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     const { data, error } = await sb.from("recipes").select("data");
@@ -42,8 +48,12 @@ export default async (request, context) => {
     } else if (!data) {
       debugInfo = "no-data-returned";
     } else {
-      debugInfo = "rows=" + data.length + " slugs=" + data.map((r) => (r.data && r.data.slug) || "?").join(",");
-      const match = data.find((row) => row.data && row.data.slug === slug);
+      debugInfo = "rows=" + data.length;
+      const match = data.find((row) => {
+        if (!row.data) return false;
+        const rowSlug = row.data.slug || slugify(row.data.title);
+        return rowSlug === slug;
+      });
       if (match) {
         recipe = match.data;
         debugInfo += " MATCHED";
@@ -56,16 +66,7 @@ export default async (request, context) => {
   }
 
   const response = await context.next();
-
-  if (!recipe) {
-    // TEMPORARY DEBUG MODE: show what went wrong right in the title, so it's visible
-    // in any link-preview checker without needing to read server logs.
-    let html = await response.text();
-    html = html.replace(/<title>.*?<\/title>/, `<title>DEBUG: ${escapeHtml(debugInfo)}</title>`);
-    const headers = new Headers(response.headers);
-    headers.set("content-type", "text/html; charset=utf-8");
-    return new Response(html, { status: response.status, headers });
-  }
+  if (!recipe) return response;
 
   let html = await response.text();
 
