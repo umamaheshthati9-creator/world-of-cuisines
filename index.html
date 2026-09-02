@@ -546,6 +546,7 @@
   let tapCount = 0;
   let tapTimer = null;
   let pendingCoverData = null; // data URL from a freshly-picked file, cleared each form open
+  let pendingUploadPromise = null; // resolves once the photo finishes uploading to storage
 
   const homeView = document.getElementById('homeView');
   const savedView = document.getElementById('savedView');
@@ -793,10 +794,8 @@
       card.addEventListener('click', ()=> openArticle(a.id));
       grid.appendChild(card);
     });
-  }
-
-  function renderSavedGrid(){
-        const list = articles.filter(a => savedIds.includes(a.id));
+      function renderSavedGrid(){
+    const list = articles.filter(a => savedIds.includes(a.id));
     if(list.length === 0){
       savedGridWrap.innerHTML = `
         <div class="empty">
@@ -929,7 +928,7 @@
   }
 
   /* ---------------- write / edit form ---------------- */
-  function readAndCompressImage(file, callback){
+  function compressImageToBlob(file, callback){
     const reader = new FileReader();
     reader.onload = function(e){
       const img = new Image();
@@ -942,11 +941,23 @@
         const canvas = document.createElement('canvas');
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        callback(canvas.toDataURL('image/jpeg', IMG_QUALITY));
+        const previewDataUrl = canvas.toDataURL('image/jpeg', IMG_QUALITY);
+        canvas.toBlob((blob)=> callback(blob, previewDataUrl), 'image/jpeg', IMG_QUALITY);
       };
       img.src = e.target.result;
     };
     reader.readAsDataURL(file);
+  }
+
+  async function uploadCoverPhoto(blob){
+    const path = 'recipe-' + Date.now() + '-' + Math.random().toString(36).slice(2,8) + '.jpg';
+    const { error } = await sb.storage.from('recipe-photos').upload(path, blob, {
+      contentType: 'image/jpeg',
+      upsert: true
+    });
+    if(error) throw error;
+    const { data } = sb.storage.from('recipe-photos').getPublicUrl(path);
+    return data.publicUrl;
   }
 
   function openWriteForm(id){
@@ -982,7 +993,7 @@
       <div class="or-sep">or</div>
       <div class="field">
         <label for="photoUrlInput">Paste an image URL</label>
-        <input type="url" id="photoUrlInput" placeholder="https://..." value="${existing && !existing.coverIsUpload ? escapeHtml(existing.coverImage || '') : ''}">
+        <input type="url" id="photoUrlInput" placeholder="https://..." value="${existing ? escapeHtml(existing.coverImage || '') : ''}">
       </div>
 
       <div class="fieldset-title">Video (optional)</div>
@@ -1032,18 +1043,32 @@
       const preview = document.getElementById('imgPreview');
       preview.src = existing.coverImage;
       preview.classList.remove('hidden');
-      if(existing.coverIsUpload){ pendingCoverData = existing.coverImage; }
     }
 
     document.getElementById('photoFile').addEventListener('change', (e)=>{
       const file = e.target.files[0];
       if(!file) return;
-      readAndCompressImage(file, (dataUrl)=>{
-        pendingCoverData = dataUrl;
-        const preview = document.getElementById('imgPreview');
-        preview.src = dataUrl;
+      const preview = document.getElementById('imgPreview');
+      const urlField = document.getElementById('photoUrlInput');
+      pendingCoverData = null;
+      urlField.value = '';
+      urlField.disabled = true;
+      urlField.placeholder = 'Uploading photo…';
+      compressImageToBlob(file, (blob, previewDataUrl)=>{
+        preview.src = previewDataUrl; // instant local preview while the real upload finishes
         preview.classList.remove('hidden');
-        document.getElementById('photoUrlInput').value = '';
+        pendingUploadPromise = (async ()=>{
+          try{
+            const publicUrl = await uploadCoverPhoto(blob);
+            pendingCoverData = publicUrl;
+            urlField.disabled = false;
+            urlField.placeholder = 'https://...';
+          }catch(err){
+            urlField.disabled = false;
+            urlField.placeholder = 'https://...';
+            alertModal('Could not upload the photo — check your connection and try again, or paste an image URL instead.', 'Upload failed');
+          }
+        })();
       });
     });
 
@@ -1069,9 +1094,18 @@
         return;
       }
 
-      let coverImage = null, coverIsUpload = false;
-      if(pendingCoverData){ coverImage = pendingCoverData; coverIsUpload = true; }
-      else if(photoUrl){ coverImage = photoUrl; coverIsUpload = false; }
+      if(pendingUploadPromise){
+        const saveBtn = document.getElementById('saveBtn');
+        const originalLabel = saveBtn.textContent;
+        saveBtn.textContent = 'Uploading photo…';
+        saveBtn.disabled = true;
+        await pendingUploadPromise;
+        pendingUploadPromise = null;
+        saveBtn.textContent = originalLabel;
+        saveBtn.disabled = false;
+      }
+
+      let coverImage = pendingCoverData || photoUrl || null;
 
       let recipe;
       if(existing){
@@ -1080,7 +1114,6 @@
         recipe.description = description;
         recipe.category = category;
         recipe.coverImage = coverImage;
-        recipe.coverIsUpload = coverIsUpload;
         recipe.videoUrl = videoUrl;
         recipe.activeTime = activeTime;
         recipe.totalTime = totalTime;
@@ -1092,7 +1125,7 @@
       } else {
         recipe = {
           id: 'r_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
-          title, description, category, coverImage, coverIsUpload, videoUrl,
+          title, description, category, coverImage, videoUrl,
           activeTime, totalTime, servings, ingredients, directions, notes,
           date: new Date().toISOString(), updated: null
         };
@@ -1175,3 +1208,5 @@
 
 </body>
 </html>
+  }
+  
